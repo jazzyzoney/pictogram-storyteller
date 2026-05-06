@@ -3,7 +3,7 @@
   "scenarios": {
     "school": {
       "label": "Skole",
-      "activities": ["Dansk", "Matematik", "Pause", "Frokost", "Idræt"]
+      "activities": ["Dansk", "Matematik", "Pause", "Frokost", "Idræt", "Tysk", "Billedkunst", "Fransk", "Svømning", "Religion"]
     },
     "home": {
       "label": "Hjemme",

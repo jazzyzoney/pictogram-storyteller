@@ -10,6 +10,16 @@ const __dirname = path.dirname(__filename)
 
 const router = Router()
 
+// SIKKER INDLÆSNING AF SPROGFIL
+let daLocale;
+try {
+    const localePath = path.join(__dirname, '../locales/da.json');
+    daLocale = JSON.parse(fs.readFileSync(localePath, 'utf8'));
+} catch (err) {
+    console.error("❌ Kunne ikke indlæse da.json. Tjek stien!", err.message);
+    daLocale = { mappings: {} }; // Fallback så appen ikke crasher
+}
+
 
 // router.get('/api/stories', async (req, res) => {
 //     try {
@@ -170,11 +180,11 @@ for (const item of keywords) {
     }
 })
 
-// Indlæs dansk sprogfil (du kan senere gøre dette dynamisk baseret på brugerens valg)
-const daLocale = JSON.parse(fs.readFileSync('./locales/da.json', 'utf8'));
-
 router.post('/api/schedules/generate', async (req, res) => {
     const { rows } = req.body;
+    if (!rows) return res.status(400).json({ error: "Ingen data modtaget" });
+
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     const finalSchedule = [];
 
     try {
@@ -182,20 +192,20 @@ router.post('/api/schedules/generate', async (req, res) => {
             let processedRow = { time: row.time };
             
             for (let day of ['mon', 'tue', 'wed', 'thu', 'fri']) {
-                let activity = row[day]?.toLowerCase().trim();
+                let activity = row[day]?.trim() || "";
                 
-                if (activity) {
-                    let englishKeyword;
+                if (activity !== "") {
+                    const activityLower = activity.toLowerCase();
+                    let englishKeyword = "";
                     let manualId = null;
 
-                    // 1. Tjek i18n Mappings (Ordbogen) først
-                    if (daLocale.mappings[activity]) {
-                        englishKeyword = daLocale.mappings[activity].en;
-                        manualId = daLocale.mappings[activity].manualId;
-                        console.log(`✅ i18n Match fundet for "${activity}": ${englishKeyword}`);
+                    // Tjek ordbogen først
+                    if (daLocale.mappings[activityLower]) {
+                        englishKeyword = daLocale.mappings[activityLower].en;
+                        manualId = daLocale.mappings[activityLower].manualId;
                     } else {
-                        // 2. AI Fallback hvis ordet ikke er i vores ordbog
-                        const prompt = `Translate to 1 English word for pictogram search: "${activity}"`;
+                        // AI Fallback
+                        const prompt = `Translate to 1 English keyword for pictogram search: "${activity}". Return only the word.`;
                         const completion = await groq.chat.completions.create({
                             messages: [{ role: "user", content: prompt }],
                             model: "llama-3.3-70b-versatile",
@@ -203,99 +213,31 @@ router.post('/api/schedules/generate', async (req, res) => {
                         englishKeyword = completion.choices[0]?.message?.content.trim();
                     }
 
-                    // 3. ARASAAC Fetch (Brug manualId hvis det findes for 100% præcision)
-                    const searchId = manualId || null;
-                    let url;
-
-                    if (searchId) {
-                        url = `https://static.arasaac.org/pictograms/${searchId}/${searchId}_300.png`;
+                    // ARASAAC Fetch
+                    let url = "";
+                    if (manualId) {
+                        url = `https://static.arasaac.org/pictograms/${manualId}/${manualId}_300.png`;
                     } else {
                         const response = await fetch(`https://api.arasaac.org/api/pictograms/en/bestSearch/${encodeURIComponent(englishKeyword)}`);
                         const data = await response.json();
-                        const id = data[0]?._id;
-                        url = id ? `https://static.arasaac.org/pictograms/${id}/${id}_300.png` : null;
+                        if (data && data.length > 0) {
+                            const id = data[0]._id;
+                            url = `https://static.arasaac.org/pictograms/${id}/${id}_300.png`;
+                        }
                     }
-
-                    processedRow[day] = { keyword: row[day], url };
+                    processedRow[day] = { keyword: activity, url: url };
+                } else {
+                    processedRow[day] = null;
                 }
             }
             finalSchedule.push(processedRow);
         }
+
         res.json({ success: true, schedule: finalSchedule });
     } catch (error) {
-        res.status(500).send("Fejl i skema-generering");
+        console.error("Skema fejl:", error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
-
-// router.post('/api/schedules/generate', async (req, res) => {
-//     const { rows } = req.body; // Modtager rækkerne fra Svelte
-//     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-//     const finalSchedule = [];
-
-//     try {
-//         for (let row of rows) {
-//             let processedRow = { time: row.time };
-//             const days = ['mon', 'tue', 'wed', 'thu', 'fri'];
-
-//             for (let day of days) {
-//                 let activity = row[day];
-//                 if (activity && activity.trim() !== "") {
-                    
-//                 let englishKeyword;
-
-//                     // Hardcoded fix for de mest almindelige ord:
-//                     if (activity.toLowerCase().trim() === "pause") {
-//                         englishKeyword = "rest"; 
-//                     } else {
-//                         const prompt = `Translate this Danish activity to a single English keyword for a pictogram search: "${activity}". Return ONLY the English word.`;
-//                         const completion = await groq.chat.completions.create({
-//                             messages: [{ role: "user", content: prompt }],
-//                             model: "llama-3.3-70b-versatile",
-//                         });
-//                         englishKeyword = completion.choices[0]?.message?.content.trim();
-//                     }
-
-//                 // const activity = row[day];
-//                 // if (activity && activity.trim() !== "") {
-
-//                 //     // 1. AI: Oversæt aktiviteten til engelsk for bedre søgning
-//                 //     const prompt = `Translate this Danish activity to a single English keyword for a pictogram search: "${activity}". Return ONLY the English word.`;
-//                 //     const completion = await groq.chat.completions.create({
-//                 //         messages: [{ role: "user", content: prompt }],
-//                 //         model: "llama-3.3-70b-versatile",
-//                 //     });
-//                 //     const englishKeyword = completion.choices[0]?.message?.content.trim();
-
-//                     // 2. ARASAAC: Find piktogrammet
-//                     const response = await fetch(`https://api.arasaac.org/api/pictograms/en/bestSearch/${encodeURIComponent(englishKeyword)}`);
-//                     const data = await response.json();
-
-//                     if (data && data.length > 0) {
-//                         const bestMatch = data.find(p => p.aacColor) || data[0];
-//                         processedRow[day] = {
-//                             keyword: activity, // Bevar det danske navn til visning
-//                             url: `https://static.arasaac.org/pictograms/${bestMatch._id}/${bestMatch._id}_300.png`
-//                         };
-//                     }
-//                 } else {
-//                     processedRow[day] = null;
-//                 }
-//             }
-//             finalSchedule.push(processedRow);
-//         }
-
-//         // 3. Gem i databasen
-//         await db.run(
-//             `INSERT INTO schedules (title, schedule_json) VALUES (?, ?)`,
-//             ["Ugeskema", JSON.stringify(finalSchedule)]
-//         );
-
-//         res.json({ success: true, schedule: finalSchedule });
-
-//     } catch (error) {
-//         console.error("Skema fejl:", error);
-//         res.status(500).send("Kunne ikke generere skemaet.");
-//     }
-// });
 
 export default router

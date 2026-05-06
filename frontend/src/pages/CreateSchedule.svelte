@@ -1,12 +1,14 @@
-<script>
+<script lang="ts">
     import toastr from 'toastr';
     import 'toastr/build/toastr.min.css';
 
     let loading = false;
-    let scheduleRows = [
+    let scheduleRows: Array<{ time: string; [key: string]: string }> = [
         { time: "08:00 - 09:00", mon: "", tue: "", wed: "", thu: "", fri: "" }
     ];
-    let generatedSchedule = null;
+    let generatedSchedule: any = null;
+
+    const days = ['mon', 'tue', 'wed', 'thu', 'fri'];
 
     function addRow() {
         scheduleRows = [...scheduleRows, { time: "", mon: "", tue: "", wed: "", thu: "", fri: "" }];
@@ -14,11 +16,26 @@
 
     async function generateSchedule() {
         loading = true;
+        
+        // Vi forbereder dataene: Hvis "custom" er valgt, bruger vi den indtastede tekst fra hjælpe-feltet
+        const preparedRows = scheduleRows.map(row => {
+            let newRow: { time: string; [key: string]: string } = { time: row.time };
+            days.forEach(day => {
+                if (row[day] === 'custom') {
+                    // Brug den tekst, brugeren skrev i input-feltet
+                    newRow[day] = row[day + "_custom"] || "";
+                } else {
+                    newRow[day] = row[day];
+                }
+            });
+            return newRow;
+        });
+
         try {
             const response = await fetch('http://localhost:8080/api/schedules/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rows: scheduleRows }),
+                body: JSON.stringify({ rows: preparedRows }),
                 credentials: 'include'
             });
 
@@ -27,22 +44,23 @@
                 generatedSchedule = data.schedule;
                 toastr.success("Ugeskema genereret! 📅");
             } else {
-                toastr.error("Kunne ikke generere skema.");
+                toastr.error("Kunne ikke generere skema: " + (data.error || "Ukendt fejl"));
             }
         } catch (error) {
-            toastr.error("Kunne ikke generere skema.");
+            toastr.error("Serverfejl ved generering af skema.");
+            console.error(error);
         } finally {
             loading = false;
         }
     }
 
-    let scenarios = {
+    let scenarios: { [key: string]: string[] } = {
         "school": ["Dansk", "Matematik", "Pause", "Frokost", "Idræt"],
         "home": ["Børste tænder", "Morgenmad", "Lege", "Pause", "Sove"]
     };
     
     let selectedScenario = "school";
-    $: activities = scenarios[selectedScenario];
+    $: activities = scenarios[selectedScenario] || [];
 </script>
 
 <main>
@@ -69,64 +87,29 @@
                 </tr>
             </thead>
             <tbody>
-                {#each scheduleRows as row, i}
+                {#each scheduleRows as row}
                     <tr>
                         <td><input type="text" bind:value={row.time} placeholder="Tid..."></td>
-                        <td>
-                        <select bind:value={row.mon}>
-                            <option value="">-- Vælg eller skriv --</option>
-                            {#each activities as act}
-                                <option value={act}>{act}</option>
-                            {/each}
-                        </select>
-                        
-                        <input 
-                            type="text" 
-                            bind:value={row.mon} 
-                            placeholder="Egen tekst..." 
-                            style="margin-top: 5px; font-size: 0.8rem;"
-                        />
-                        </td>
-                        <td>
-                            <select bind:value={row.mon}>
-                                <option value="">-- Vælg --</option>
-                                {#each activities as act}
-                                    <option value={act}>{act}</option>
-                                {/each}
-                            </select>
-                        </td>
-                        <td>
-                            <select bind:value={row.tue}>
-                                <option value="">-- Vælg --</option>
-                                {#each activities as act}
-                                    <option value={act}>{act}</option>
-                                {/each}
-                            </select>
-                        </td>
-                        <td>
-                            <select bind:value={row.wed}>
-                                <option value="">-- Vælg --</option>
-                                {#each activities as act}
-                                    <option value={act}>{act}</option>
-                                {/each}
-                            </select>
-                        </td>
-                        <td>
-                            <select bind:value={row.thu}>
-                                <option value="">-- Vælg --</option>
-                                {#each activities as act}
-                                    <option value={act}>{act}</option>
-                                {/each}
-                            </select>
-                        </td>
-                        <td>
-                            <select bind:value={row.fri}>
-                                <option value="">-- Vælg --</option>
-                                {#each activities as act}
-                                    <option value={act}>{act}</option>
-                                {/each}
-                            </select>
-                        </td>
+                        {#each days as day}
+                            <td>
+                                <select bind:value={row[day]}>
+                                    <option value="">-- Vælg --</option>
+                                    {#each activities as act}
+                                        <option value={act}>{act}</option>
+                                    {/each}
+                                    <option value="custom">Andet...</option>
+                                </select>
+
+                                {#if row[day] === 'custom'}
+                                    <input 
+                                        type="text" 
+                                        placeholder="Skriv selv..." 
+                                        bind:value={row[day + "_custom"]}
+                                        style="margin-top: 5px; font-size: 0.8rem;"
+                                    />
+                                {/if}
+                            </td>
+                        {/each}
                     </tr>
                 {/each}
             </tbody>
@@ -151,7 +134,7 @@
 
             {#each generatedSchedule as row}
                 <div class="time-cell">{row.time}</div>
-                {#each ['mon', 'tue', 'wed', 'thu', 'fri'] as day}
+                {#each days as day}
                     <div class="pic-cell">
                         {#if row[day]}
                             <img src={row[day].url} alt={row[day].keyword} />

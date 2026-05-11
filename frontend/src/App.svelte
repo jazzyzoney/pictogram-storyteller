@@ -4,6 +4,7 @@
     import Dashboard from './pages/Dashboard.svelte';
     import CreateStory from './pages/CreateStory.svelte';
     import CreateSchedule from './pages/CreateSchedule.svelte';
+    import ViewSchedule from './pages/ViewSchedule.svelte';
 
     import { user } from './stores/userStore.js';
     import { currentPage } from './stores/pageStore.js';
@@ -13,6 +14,13 @@
     function navigate(page) {
         $currentPage = page;
     }
+
+    const routes = {
+    '/': Home,
+    '/create-schedule': CreateSchedule,
+    // Denne linje er vigtig - den fanger ID'et fra URL'en
+    '/view-schedule/:id': ViewSchedule, 
+  };
 </script>
 
 <header>

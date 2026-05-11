@@ -20,16 +20,9 @@ try {
     daLocale = { mappings: {} }; // Fallback så appen ikke crasher
 }
 
-
-// router.get('/api/stories', async (req, res) => {
-//     try {
-//         const stories = await db.all("SELECT * FROM stories ORDER BY created_at DESC");
-//         res.json({ data: stories });
-//     } catch (error) {
-//         res.status(500).json({ error: "Kunne ikke hente historier" });
-//     }
-// });
-
+// ---------------------------------------------------------
+// RUTE 1: STORYTELLER (Fri tekst til piktogrammer)
+// ---------------------------------------------------------
 router.post('/api/stories/generate', async (req, res) => {
     const { text } = req.body
     console.log("📥 Tekst modtaget fra frontend:", text);
@@ -45,27 +38,6 @@ router.post('/api/stories/generate', async (req, res) => {
     try {
         const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
         
-        // 1. AI AGENT: Udtræk keywords
-
-        // første prompt forsøg
-        // const prompt = `System: Du er en piktogram-maskine. Du må KUN svare med rå JSON. Ingen forklaringer, ingen høflighed, ingen tekst før eller efter listen.
-        // Bruger: Oversæt disse danske ord til engelske piktogram-keywords i en JSON-liste: "${text}"
-        // Svar format: ["word1", "word2"]`;
-        
-        // andet forsøg med prompt
-        // const prompt = `System: Du er en pædagogisk piktogram-generator. Du er ekspert i at støtte børn med autisme gennem visuel struktur. 
-        // Du svarer KUN med rå JSON-data. Ingen forklaringer eller indledende tekst.
-
-        // Bruger: Analyser denne danske tekst: "${text}"
-
-        // Regler:
-        // 1. Find de 3-5 vigtigste konkrete handlinger eller navneord.
-        // 2. Oversæt ordene til ENGELSK (til brug i billedsøgning).
-        // 3. Returner en JSON-liste med objekter.
-
-        // Format eksempel: 
-        // ["word1", "word2"]`;
-
         const prompt = `System: Du er en pædagogisk piktogram-generator. Du svarer KUN med rå JSON.
         Bruger: Analyser denne danske tekst: "${text}"
 
@@ -77,7 +49,6 @@ router.post('/api/stories/generate', async (req, res) => {
         Format eksempel: 
         [{"da": "tandbørste", "en": "toothbrush"}, {"da": "seng", "en": "bed"}]`;
 
-
         const completion = await groq.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
             model: "llama-3.3-70b-versatile", 
@@ -86,14 +57,12 @@ router.post('/api/stories/generate', async (req, res) => {
         const fullText = completion.choices[0]?.message?.content || "";
         console.log("🤖 AI svarer:", fullText);
 
-        // ROBUST JSON PARSING: Vi fjerner evt. tekst udenom selve listen
         let keywords;
         try {
             const cleanJSON = fullText.replace(/```json|```/g, "").trim();
             keywords = JSON.parse(cleanJSON);
         } catch (e) {
             console.error("❌ JSON parsing fejlede. Forsøger nød-parsing.");
-            // Hvis AI'en stadig snakker, prøver vi at finde alt mellem [ og ]
             const match = fullText.match(/\[.*\]/s);
             if (match) {
                 keywords = JSON.parse(match[0]);
@@ -102,73 +71,39 @@ router.post('/api/stories/generate', async (req, res) => {
             }
         }
 
-        // 2. ARASAAC INTEGRATION
         const pictogramSequence = []
 
-// for (const word of keywords) {
-//     const cleanWord = word.trim().toLowerCase(); 
+        for (const item of keywords) {
+            const searchWord = item.en ? item.en.trim().toLowerCase() : ""; 
+            const displayWord = item.da || searchWord;
 
-//     try {
-//         // Vi bruger 'en' i stedet for 'da' i URL'en nu
-//         const response = await fetch(`https://api.arasaac.org/api/pictograms/en/bestSearch/${encodeURIComponent(cleanWord)}`);
-//         const data = await response.json();
+            if (!searchWord) continue;
 
-//         if (data && data.length > 0) {
-//             // Vi vælger det første match, men prioriterer 'aacColor: true' hvis muligt
-//             const bestMatch = data.find(p => p.aacColor) || data[0];
-//             const id = bestMatch._id; 
+            try {
+                const response = await fetch(`https://api.arasaac.org/api/pictograms/en/bestSearch/${encodeURIComponent(searchWord)}`);
+                const data = await response.json();
 
-//             pictogramSequence.push({
-//                 keyword: word, // Det engelske ord (eller din AI kan give dig begge)
-//                 url: `https://static.arasaac.org/pictograms/${id}/${id}_300.png`, 
-//                 id: id
-//             });
-//         }
-//     } catch (error) {
-//         console.error(`Fejl ved søgning på ${cleanWord}:`, error);
-//     }
-// }
+                if (data && data.length > 0) {
+                    const bestMatch = data.find(p => p.aacColor) || data[0];
+                    const id = bestMatch._id; 
 
-
-for (const item of keywords) {
-    // Da 'item' nu er et objekt f.eks. {"da": "tand", "en": "tooth"}
-    // bruger vi 'en' til søgning og 'da' til display
-    const searchWord = item.en ? item.en.trim().toLowerCase() : ""; 
-    const displayWord = item.da || searchWord;
-
-    if (!searchWord) continue;
-
-    try {
-        const response = await fetch(`https://api.arasaac.org/api/pictograms/en/bestSearch/${encodeURIComponent(searchWord)}`);
-        const data = await response.json();
-
-        if (data && data.length > 0) {
-            const bestMatch = data.find(p => p.aacColor) || data[0];
-            const id = bestMatch._id; 
-
-            pictogramSequence.push({
-                keyword: displayWord, // Her gemmes det danske ord til din frontend!
-                url: `https://static.arasaac.org/pictograms/${id}/${id}_300.png`, 
-                id: id
-            });
+                    pictogramSequence.push({
+                        keyword: displayWord, 
+                        url: `https://static.arasaac.org/pictograms/${id}/${id}_300.png`, 
+                        id: id
+                    });
+                }
+            } catch (error) {
+                console.error(`Fejl ved søgning på ${searchWord}:`, error);
+            }
         }
-    } catch (error) {
-        console.error(`Fejl ved søgning på ${searchWord}:`, error);
-    }
-}
 
-        // 3. DATABASE: Gem historien
-        // Vi bruger kolonnenavne fra din setup.js
         const result = await db.run(
             `INSERT INTO stories (title, raw_text, pictograms_json) VALUES (?, ?, ?)`,
-            [
-                text.substring(0, 30) + "...", 
-                text,
-                JSON.stringify(pictogramSequence)
-            ]
+            [text.substring(0, 30) + "...", text, JSON.stringify(pictogramSequence)]
         );
 
-        res.json({ 
+        return res.json({ 
             success: true, 
             storyId: result.lastID, 
             pictograms: pictogramSequence 
@@ -176,10 +111,16 @@ for (const item of keywords) {
 
     } catch (error) {
         console.error("Fejl i Storyteller:", error)
-        res.status(500).send("Agenten eller API'et fejlede.")
+        if (!res.headersSent) {
+            return res.status(500).send("Agenten eller API'et fejlede.")
+        }
     }
 })
 
+
+// ---------------------------------------------------------
+// RUTE 2: GENERER UGESKEMA (i18n + AI + Database)
+// ---------------------------------------------------------
 router.post('/api/schedules/generate', async (req, res) => {
     const { rows } = req.body;
     if (!rows) return res.status(400).json({ error: "Ingen data modtaget" });
@@ -188,6 +129,7 @@ router.post('/api/schedules/generate', async (req, res) => {
     const finalSchedule = [];
 
     try {
+        // 1. Byg skemaet med piktogrammer
         for (let row of rows) {
             let processedRow = { time: row.time };
             
@@ -199,12 +141,10 @@ router.post('/api/schedules/generate', async (req, res) => {
                     let englishKeyword = "";
                     let manualId = null;
 
-                    // Tjek ordbogen først
                     if (daLocale.mappings[activityLower]) {
                         englishKeyword = daLocale.mappings[activityLower].en;
                         manualId = daLocale.mappings[activityLower].manualId;
                     } else {
-                        // AI Fallback
                         const prompt = `Translate to 1 English keyword for pictogram search: "${activity}". Return only the word.`;
                         const completion = await groq.chat.completions.create({
                             messages: [{ role: "user", content: prompt }],
@@ -213,7 +153,6 @@ router.post('/api/schedules/generate', async (req, res) => {
                         englishKeyword = completion.choices[0]?.message?.content.trim();
                     }
 
-                    // ARASAAC Fetch
                     let url = "";
                     if (manualId) {
                         url = `https://static.arasaac.org/pictograms/${manualId}/${manualId}_300.png`;
@@ -233,10 +172,49 @@ router.post('/api/schedules/generate', async (req, res) => {
             finalSchedule.push(processedRow);
         }
 
-        res.json({ success: true, schedule: finalSchedule });
+        // 2. Gem i databasen EN GANG
+        const result = await db.run(
+            `INSERT INTO schedules (title, schedule_json) VALUES (?, ?)`,
+            ["Ugeskema", JSON.stringify(finalSchedule)]
+        );
+
+        // 3. Send ét samlet svar tilbage med ID'et
+        return res.json({ 
+            success: true, 
+            schedule: finalSchedule,
+            id: result.lastID 
+        });
+
     } catch (error) {
         console.error("Skema fejl:", error);
-        res.status(500).json({ success: false, error: error.message });
+        if (!res.headersSent) {
+            return res.status(500).json({ success: false, error: error.message });
+        }
+    }
+});
+
+
+// ---------------------------------------------------------
+// RUTE 3: HENT ET SPECIFIKT SKEMA (Til links / PDF visning)
+// ---------------------------------------------------------
+router.get('/api/schedules/:id', async (req, res) => {
+    try {
+        const schedule = await db.get("SELECT * FROM schedules WHERE id = ?", [req.params.id]);
+        
+        if (!schedule) {
+            return res.status(404).json({ success: false, error: "Skemaet blev ikke fundet." });
+        }
+
+        return res.json({ 
+            success: true, 
+            data: JSON.parse(schedule.schedule_json),
+            title: schedule.title
+        });
+    } catch (error) {
+        console.error("Fejl ved hentning:", error);
+        if (!res.headersSent) {
+            return res.status(500).json({ success: false, error: error.message });
+        }
     }
 });
 
